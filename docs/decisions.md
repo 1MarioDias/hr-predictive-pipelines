@@ -47,8 +47,18 @@ Determined by `df.dtypes` after the column drops above.
 
 ## 4. Preprocessing Architecture
 
-A shared `ColumnTransformer` is the first step of every pipeline:
+Every pipeline follows a three-step structure:
 
+```
+Pipeline
+ ├── preprocessor  (ColumnTransformer)
+ │    ├── num: SimpleImputer(median) → StandardScaler
+ │    └── cat: SimpleImputer(most_frequent) → OneHotEncoder(handle_unknown="ignore")
+ ├── selector      (SelectKBest — k=20)          ← variable selection
+ └── model         (estimator)
+```
+
+The `ColumnTransformer` used as `preprocessor`:
 ```
 preprocessor = ColumnTransformer([
     ("num", Pipeline([SimpleImputer(median), StandardScaler()]), NUMERIC_FEATURES),
@@ -160,7 +170,9 @@ Both final pipelines are serialized with Python's native `pickle`. Validated by 
 | Phase 6 | `## Scaling` | ✅ Done |
 | Phase 7 | `## Treino` | ✅ Done |
 | Phase 8 | `## Modelos` | ✅ Done |
-| Phase 9 | `## Otimização` | ⬜ Pending |
+| Fix: SelectKBest added to all pipelines | Variable selection step (k=20) | ✅ Done |
+| Fix: Treino/Modelos redundancy | Modelos loop seeded with Treino baselines | ✅ Done |
+| Phase 9 | `## Otimização` | ⬜ Pending (colleagues) |
 | Phase 10 | `## Deploy` | ⬜ Pending |
 | Phase 11 | Final validation + pkl files | ⬜ Pending |
 
@@ -214,7 +226,59 @@ Each confusion matrix subplot shows the model name and its F1 score in the title
 
 ---
 
-## 15. Phases 5–7 Decisions
+## 15. Variable Selection — SelectKBest
+
+The project statement explicitly lists *"variable selection"* as a required pipeline step alongside imputation, encoding, and scaling. After the `ColumnTransformer` produces 50 features (22 numeric + 28 OHE columns), a `SelectKBest` selector reduces that to the 20 most statistically relevant.
+
+**Score functions chosen by task:**
+- Regression: `f_regression` — computes the F-statistic for the linear relationship between each feature and `MonthlyIncome`. Appropriate for a continuous target.
+- Classification: `f_classif` — computes the ANOVA F-statistic between each feature and the binary `Attrition` target. Standard choice for classification with a categorical target.
+
+**Why k=20 (out of 50 post-OHE features):**
+- Retains all features that showed meaningful correlation or EDA signal (e.g. `JobLevel`, `TotalWorkingYears`, `OverTime`, `BusinessTravel`).
+- Discards OHE columns for low-signal categories (e.g. infrequent `EducationField` or `Department` splits) and near-constant numerics like `PerformanceRating`.
+- Conservative enough not to hurt performance on a 50-feature space; aggressive enough to demonstrate variable selection awareness.
+
+**How it integrates with the pipeline:**
+```python
+REG_SELECTOR = SelectKBest(f_regression, k=20)
+CLF_SELECTOR = SelectKBest(f_classif, k=20)
+
+# Each pipeline:
+Pipeline([
+    ("preprocessor", clone(preprocessor)),
+    ("selector", clone(REG_SELECTOR)),   # or CLF_SELECTOR
+    ("model", estimator),
+])
+```
+
+`clone()` is used for both `preprocessor` and `selector` so every pipeline instance has its own unfitted copies — no shared state across the comparison loop.
+
+**GridSearchCV / RandomizedSearchCV compatibility:** the selector step is accessible via `selector__k` in the parameter grid, making it straightforward to also search over `k` during optimisation if desired.
+
+---
+
+## 16. Treino / Modelos Redundancy Resolution
+
+The `## Treino` section trained two baseline models (`pipe_lr`, `pipe_logreg`) in isolation as a demonstration of the training workflow. The `## Modelos` section then re-trained those same models inside a comparison loop — creating redundancy and two different fitted objects for the same model.
+
+**Resolution chosen (Option A — minimal change):** The `## Modelos` comparison loop is seeded with the already-trained baseline pipes from `## Treino` before iterating over the remaining models:
+
+```python
+# Seed with baselines from ## Treino — no redundant refit
+reg_pipes = {"LinearRegression": (pipe_lr, y_reg_pred_lr)}
+clf_pipes = {"LogisticRegression": (pipe_logreg, y_clf_pred_logreg, y_clf_prob_logreg)}
+
+# Loop only over non-baseline models
+for name, estimator in [(...)]:   # RandomForest, GradientBoosting
+    ...
+```
+
+**Why Option A over Option B:** minimises the diff to the colleague's existing cells in `## Treino`, which already have output cached. Option B (removing Treino training cells entirely) would invalidate cached outputs and break the narrative of introducing the workflow before the full comparison.
+
+---
+
+## 17. Phases 5–7 Decisions
 
 ### Phase 5 — Train/Test Split
 
@@ -242,7 +306,7 @@ Expected to perform well given `JobLevel`↔`MonthlyIncome` ≈ 0.95 correlation
 
 ---
 
-## 15. GenAI Usage (for report section)
+## 18. GenAI Usage (for report section)
 
 Claude Code (claude-sonnet-4-6) was used as a development assistant. Key uses:
 - Structuring the EDA notebook and commentary templates
