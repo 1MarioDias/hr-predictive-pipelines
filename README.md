@@ -33,12 +33,29 @@ The final exported file should behave like a black box: it must accept raw input
 
 ## Deliverables
 
-The following files must be delivered:
+| File | Description |
+|---|---|
+| `Group08_pipeline_regression.pkl` | Trained sklearn pipeline for `MonthlyIncome` regression |
+| `Group08_pipeline_classification.pkl` | Trained sklearn pipeline for `Attrition` classification |
+| `Group08_notebook.ipynb` | Full notebook: EDA, model comparison, hyperparameter tuning, theoretical commentary |
+| `Group08_report.docx` | Project report: decisions, models tested, reasoning, GenAI prompts used |
 
-- `[GroupX]_pipeline_regression.pkl` — trained pipeline for the regression problem
-- `[GroupX]_pipeline_classification.pkl` — trained pipeline for the classification problem
-- `[GroupX]_notebook.ipynb` — Jupyter Notebook with EDA, validation, model comparison, hyperparameter tuning, and theoretical notes
-- `[GroupX]_report.docx` — detailed report describing the project execution, decisions taken, tested models, reasoning, and Generative AI prompts used
+## Repository Structure
+
+```
+hr-predictive-pipelines/
+├── Group08_notebook.ipynb              # DELIVERABLE
+├── Group08_pipeline_regression.pkl     # DELIVERABLE
+├── Group08_pipeline_classification.pkl # DELIVERABLE
+├── Group08_report.docx                 # DELIVERABLE (written manually)
+├── employee_data/                      # Dataset
+├── notebooks/                          # Working/scratch notebooks
+├── reference/                          # Assignment PDF + course reference notebooks
+├── docs/
+│   ├── decisions.md                    # Decision log → feeds the report
+│   └── eda-techniques-guide.md
+└── README.md
+```
 
 ## Pipeline Design
 
