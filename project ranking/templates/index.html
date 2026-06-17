@@ -1,0 +1,37 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>🏆 IA Leaderboard 2026</title>
+    <meta charset="utf-8">
+    <link href='https://fonts.googleapis.com/css?family=Pacifico' rel='stylesheet' type='text/css'>
+    <link href='https://fonts.googleapis.com/css?family=Arimo' rel='stylesheet' type='text/css'>
+    <link href='https://fonts.googleapis.com/css?family=Hind:300' rel='stylesheet' type='text/css'>
+    <link href='https://fonts.googleapis.com/css?family=Open+Sans+Condensed:300' rel='stylesheet' type='text/css'>
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
+</head>
+
+
+<body>
+    <h1>🏆 Classificação de Modelos de IA</h1>
+    <div class="subtitle">Tecnologias e Sistemas de Informação para a Web</div>
+    
+    <table>
+        <tr>
+            <th>Posição</th>
+            <th>Grupo de Trabalho</th>
+            <th>Regressão (R²)</th>
+            <th>Classificação (F1)</th>
+            <th>Score Combinado</th>
+        </tr>
+        {% for item in ranking %}
+        <tr>
+            <td>{{ loop.index }}º Lugar</td>
+            <td><strong>{{ item.grupo }}</strong></td>
+            <td class="score-sub">{{ item.score_reg }}</td>
+            <td class="score-sub">{{ item.score_class }}</td>
+            <td class="score-primary">{{ item.score }}</td>
+        </tr>
+        {% endfor %}
+    </table>
+</body>
+</html>
