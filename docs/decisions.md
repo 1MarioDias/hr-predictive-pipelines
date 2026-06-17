@@ -1,317 +1,162 @@
-# Decision Log — Group08 HR Predictive Pipelines
+# Registo de Decisões — Group08 HR Predictive Pipelines
 
-This file records every analytical and architectural decision made during the project, with the reasoning behind each. It is the primary source for writing `Group08_report.docx`.
-
----
-
-## 1. Dataset
-
-**File**: `employee_data/employee_data.csv` — 1249 rows × 35 columns.  
-**No nulls** in the provided file. `SimpleImputer` is still placed inside each pipeline because the blind-test evaluator may send rows with missing values.
+Este documento acompanha o desenvolvimento do projeto e serve de base para a redação do `Group08_report.docx`. Cada secção corresponde a uma fase do trabalho e explica as escolhas feitas, com os valores reais obtidos durante a execução.
 
 ---
 
-## 2. Columns Dropped from X
+## 1. Análise do Dataset
 
-| Column | Reason |
-|---|---|
-| `EmployeeNumber` | Unique ID per row — no predictive signal, would cause overfitting |
-| `EmployeeCount` | Constant value = 1 across all rows — zero variance |
-| `StandardHours` | Constant value = 80 across all rows — zero variance |
-| `Over18` | Constant value = 'Y' across all rows — zero variance |
+O ficheiro `employee_data.csv` contém 1249 registos e 35 colunas, sem nenhum valor nulo. Os dois alvos estão presentes: `MonthlyIncome` (inteiro contínuo, alvo da regressão) e `Attrition` (string "Yes"/"No", alvo da classificação). A distribuição de `Attrition` é bastante desequilibrada: 1048 registos com "No" e 201 com "Yes", o que representa aproximadamente 16% de saídas.
 
-When building each pipeline, the **other target** is also excluded from X:
-- Regression X: additionally drops `Attrition`
-- Classification X: additionally drops `MonthlyIncome`
+> **[Figura 1 — Notebook, secção "Análises do Relatório de Dados"]**
+> Histograma de `MonthlyIncome` com curva KDE e gráfico de barras com contagens e percentagens de `Attrition`. Inserir aqui no relatório.
 
----
+A análise de correlação entre variáveis numéricas revelou que `JobLevel` tem uma correlação muito elevada com `MonthlyIncome` (aproximadamente 0.95), o que é o sinal mais forte para a regressão. `TotalWorkingYears` e `Age` também contribuem de forma significativa.
 
-## 3. Feature Types
+> **[Figura 2 — Notebook, secção "Análises do Relatório de Dados"]**
+> Heatmap de correlação entre todas as variáveis numéricas. Inserir aqui no relatório.
 
-Determined by `df.dtypes` after the column drops above.
+Nas variáveis categóricas, o cruzamento de `OverTime` com `Attrition` mostrou que funcionários com horas extra têm uma taxa de saída de 29%, contra 11% nos restantes. `BusinessTravel` apresenta um padrão semelhante, com quem viaja frequentemente a sair mais do que quem não viaja.
 
-**Numeric** (`int64` / `float64`) — processed with `SimpleImputer(median)` + `StandardScaler`:
-`Age`, `DailyRate`, `DistanceFromHome`, `Education`, `EnvironmentSatisfaction`,
-`HourlyRate`, `JobInvolvement`, `JobLevel`, `JobSatisfaction`, `MonthlyRate`,
-`NumCompaniesWorked`, `PercentSalaryHike`, `PerformanceRating`,
-`RelationshipSatisfaction`, `StockOptionLevel`, `TotalWorkingYears`,
-`TrainingTimesLastYear`, `WorkLifeBalance`, `YearsAtCompany`,
-`YearsInCurrentRole`, `YearsSinceLastPromotion`, `YearsWithCurrManager`
+> **[Figura 3 — Notebook, secção "Análises do Relatório de Dados"]**
+> Gráficos de barras empilhadas com a percentagem de Attrition por `OverTime` e por `BusinessTravel`. Inserir aqui no relatório.
 
-**Categorical** (`object`) — processed with `SimpleImputer(most_frequent)` + `OneHotEncoder(handle_unknown="ignore")`:
-`BusinessTravel`, `Department`, `EducationField`, `Gender`, `JobRole`, `MaritalStatus`, `OverTime`
-
-**Note on ordinal columns** (`Education`, `JobSatisfaction`, `EnvironmentSatisfaction`, etc.): stored as integers on a 1–4/5 scale, treated as numeric. Tree-based models (the primary models here) are invariant to monotonic feature transformations, so the ordinal structure is preserved without a dedicated encoder.
+Quatro colunas foram removidas antes da construção das features: `EmployeeNumber` é um identificador único sem qualquer sinal preditivo; `EmployeeCount` e `StandardHours` têm um único valor em todas as linhas e portanto variância zero; `Over18` contém sempre "Y". Em cada pipeline, o alvo da outra tarefa também é excluído de X para evitar fuga de informação.
 
 ---
 
-## 4. Preprocessing Architecture
+## 2. Pré-processamento e Arquitectura dos Pipelines
 
-Every pipeline follows a three-step structure:
+Após os drops, ficaram 29 colunas de features. A deteção automática dos tipos por `df.dtypes` produziu 22 variáveis numéricas e 7 categóricas.
+
+**Numéricas (22):** Age, DailyRate, DistanceFromHome, Education, EnvironmentSatisfaction, HourlyRate, JobInvolvement, JobLevel, JobSatisfaction, MonthlyRate, NumCompaniesWorked, PercentSalaryHike, PerformanceRating, RelationshipSatisfaction, StockOptionLevel, TotalWorkingYears, TrainingTimesLastYear, WorkLifeBalance, YearsAtCompany, YearsInCurrentRole, YearsSinceLastPromotion, YearsWithCurrManager.
+
+**Categóricas (7):** BusinessTravel, Department, EducationField, Gender, JobRole, MaritalStatus, OverTime.
+
+As variáveis ordinais como `Education` e `JobSatisfaction` estão codificadas como inteiros de 1 a 4 ou 5 e são tratadas como numéricas. Os modelos de árvore não assumem distância entre categorias, por isso não foi necessário aplicar um encoder ordinal dedicado.
+
+O pré-processamento foi encapsulado num `ColumnTransformer` com dois ramos. Para as variáveis numéricas: `SimpleImputer(strategy="median")` seguido de `StandardScaler`. Para as categóricas: `SimpleImputer(strategy="most_frequent")` seguido de `OneHotEncoder(handle_unknown="ignore", sparse_output=False)`. O uso de mediana (em vez de média) nos imputadores numéricos torna o pipeline robusto a valores extremos, que são comuns em dados salariais. O parâmetro `handle_unknown="ignore"` no encoder é obrigatório para o blind test: se o conjunto de avaliação contiver uma categoria não vista em treino (por exemplo, um novo `JobRole`), o encoder produz um vetor de zeros em vez de lançar um erro.
+
+Depois do `ColumnTransformer`, cada pipeline inclui um `SelectKBest` com k=20 como passo de seleção de features. O valor de k é pesquisável no `RandomizedSearchCV`, o que permite que a otimização encontre o número ideal de features para cada modelo. O `StandardScaler` está dentro do pipeline e é ajustado apenas sobre `X_train`, o que evita que a informação do conjunto de teste contamine o treino.
+
+A estrutura final de cada pipeline exportável é:
 
 ```
 Pipeline
  ├── preprocessor  (ColumnTransformer)
- │    ├── num: SimpleImputer(median) → StandardScaler
- │    └── cat: SimpleImputer(most_frequent) → OneHotEncoder(handle_unknown="ignore")
- ├── selector      (SelectKBest — k=20)          ← variable selection
- └── model         (estimator)
+ │    ├── num: SimpleImputer(median) → StandardScaler        [22 features]
+ │    └── cat: SimpleImputer(most_frequent) → OneHotEncoder  [7 → 28 colunas]
+ ├── selector      (SelectKBest, k configurável)
+ └── model         (estimador)
 ```
 
-The `ColumnTransformer` used as `preprocessor`:
-```
-preprocessor = ColumnTransformer([
-    ("num", Pipeline([SimpleImputer(median), StandardScaler()]), NUMERIC_FEATURES),
-    ("cat", Pipeline([SimpleImputer(most_frequent), OneHotEncoder(handle_unknown="ignore")]), CATEGORICAL_FEATURES),
-])
-```
-
-**Why `handle_unknown="ignore"`**: the blind test may include employees with categorical values not seen during training (e.g. a new `JobRole`). Without this flag the pipeline raises a `ValueError` at inference time. With it, unseen categories produce a zero vector — a safe, neutral representation.
-
-**Why `sparse_output=False`**: avoids deprecation warnings in scikit-learn ≥ 1.2 and simplifies downstream debugging.
-
-**Why scaling inside the pipeline**: fitting `StandardScaler` on the full dataset before the train/test split leaks test-set statistics into training. Placing the scaler inside the pipeline ensures it is fit only on `X_train` and applied to `X_test`.
+Os pipelines não contêm nenhuma classe externa ao scikit-learn. Esta decisão foi tomada para garantir compatibilidade com o avaliador, que carrega os ficheiros com `pickle.load()` num ambiente onde classes personalizadas não estão disponíveis.
 
 ---
 
-## 5. Target Encoding
+## 3. Divisão Treino/Teste
 
-### Regression — `MonthlyIncome`
-Already numeric (`int64`). Used directly as `y_reg = df['MonthlyIncome'].astype(float)`.
+A divisão foi feita com `test_size=0.2` e `random_state=24`. Para a classificação, o parâmetro `stratify=y_clf` garante que a proporção de 16% "Yes" é mantida em ambos os conjuntos. O treino ficou com 999 amostras e o teste com 250, com 161 "Yes" no treino e 40 no teste.
 
-### Classification — `Attrition`
-String categories `'Yes'` / `'No'`. Encoded **outside** the pipeline:
-```python
-y_clf = (df['Attrition'] == 'Yes').astype(int)  # 1 = churned, 0 = stayed
+---
+
+## 4. Regressão — Comparação de Modelos
+
+Foram treinados três modelos com a mesma estrutura de pipeline. O `LinearRegression` serve como baseline; o `RandomForestRegressor` e o `GradientBoostingRegressor` capturam relações não lineares que o modelo linear não consegue representar.
+
+| Modelo | R² | RMSE | MAE |
+|---|---|---|---|
+| LinearRegression | 0.9277 | 1134.48 | 882.22 |
+| RandomForestRegressor | 0.9399 | 1034.38 | 769.58 |
+| GradientBoostingRegressor | 0.9398 | 1034.88 | 770.19 |
+
+O `LinearRegression` já obtém um R² de 0.93, o que é explicado pela correlação quase linear entre `JobLevel` e `MonthlyIncome`. Os modelos de ensemble melhoram ligeiramente ao capturar interações entre variáveis como `TotalWorkingYears`, `Age` e `JobRole`. O `RandomForestRegressor` ficou em primeiro lugar e foi selecionado para a otimização de hiperparâmetros.
+
+> **[Figura 4 — Notebook, secção "Modelos"]**
+> Três gráficos de resíduos lado a lado (previsão vs. resíduo) para os três modelos de regressão. Inserir aqui no relatório.
+
+---
+
+## 5. Classificação — Comparação de Modelos
+
+Para a classificação, o alvo `y_clf` preserva os rótulos originais "Yes" e "No" em formato de string. Esta escolha é necessária porque o avaliador calcula `f1_score(y_real, pred, average='macro')` com strings, e um pipeline treinado com rótulos de string produz predições de string directamente, sem conversão manual.
+
+A métrica de avaliação é o Macro F1, que calcula o F1 de cada classe separadamente e faz a média aritmética. Com 16% de "Yes", um modelo que apenas preveja "No" obteria um F1 alto na classe maioritária mas zero na minoritária, resultando num Macro F1 baixo. Esta métrica penaliza esse comportamento.
+
+Foram treinados três modelos:
+
+| Modelo | Macro F1 | Accuracy | ROC-AUC |
+|---|---|---|---|
+| LogisticRegression | 0.6507 | 0.740 | 0.8018 |
+| GradientBoostingClassifier | 0.7088 | 0.880 | 0.8119 |
+| RandomForestClassifier | 0.6371 | 0.864 | 0.8009 |
+
+O `GradientBoostingClassifier` obteve o melhor Macro F1 e foi selecionado para otimização. O `LogisticRegression` com `class_weight='balanced'` serve de baseline: este parâmetro ajusta os pesos das classes inversamente à sua frequência, o que evita que o modelo ignore completamente a classe minoritária. O `RandomForestClassifier` usa o mesmo parâmetro. O `GradientBoostingClassifier` não suporta `class_weight`, mas o algoritmo de boosting corrige iterativamente os erros cometidos nas iterações anteriores, o que tem um efeito parcialmente equivalente.
+
+> **[Figura 5 — Notebook, secção "Modelos"]**
+> Matrizes de confusão dos três modelos de classificação com o Macro F1 de cada um no título. Inserir aqui no relatório.
+
+---
+
+## 6. Otimização de Hiperparâmetros
+
+### Regressão
+
+Foi usada a `RandomizedSearchCV` com 20 iterações, validação cruzada de 5 folds e `scoring='r2'`. O espaço de pesquisa cobriu `n_estimators`, `max_depth` e `min_samples_split`.
+
+Melhores hiperparâmetros encontrados:
+
 ```
-Encoding outside the pipeline is correct because `y` is never passed through `predict()` — only `X` flows through the pipeline, so there is no leakage risk.
+n_estimators   = 200
+max_depth      = 5
+min_samples_split = 5
+```
 
----
+Melhor R² em validação cruzada: **0.9507**. No conjunto de teste: **R² = 0.9417**, RMSE = 1018.26, MAE = 742.03.
 
-## 6. Train / Test Split
+### Classificação
 
-- `test_size=0.2`, `random_state=24`
-- Classification split uses `stratify=y_clf` because Attrition is imbalanced (~16% Yes). Without stratification the test set could contain a very different class ratio than training, making evaluation metrics unreliable.
+Foi usada a `RandomizedSearchCV` com 50 iterações, `StratifiedKFold(n_splits=5, shuffle=True, random_state=24)` e `scoring='f1_macro'`. O `StratifiedKFold` é necessário porque com apenas 16% de "Yes", um split aleatório pode produzir folds com proporções muito diferentes, tornando os scores de validação cruzada pouco estáveis. O parâmetro `selector__k` foi incluído no espaço de pesquisa para que o número de features selecionadas também pudesse ser otimizado.
 
----
+Melhores hiperparâmetros encontrados:
 
-## 7. Class Imbalance — Attrition (~16% Yes)
+```
+selector__k        = all (todas as 50 features após o ColumnTransformer)
+n_estimators       = 300
+max_depth          = 3
+learning_rate      = 0.05
+subsample          = 0.8
+min_samples_leaf   = 1
+```
 
-Attrition = 'Yes' is ~16% of rows (≈ 201 out of 1249). Two decisions address this:
+Melhor Macro F1 em validação cruzada: resultado obtido com `scoring='f1_macro'`. No conjunto de teste: **Macro F1 = 0.7106**, F1(Yes) = 0.4918, F1(No) = 0.9294, ROC-AUC = 0.7849.
 
-1. **`class_weight='balanced'`** on classifiers that support it (`LogisticRegression`, `RandomForestClassifier`). Adjusts loss weights inversely proportional to class frequencies, penalising minority-class misclassification more heavily.
-2. **Evaluation metric = F1-score**. Accuracy is misleading on imbalanced data — a model that always predicts "No" achieves ~84% accuracy while being useless. F1 balances precision and recall for the positive (churn) class, which is what the blind test scores on.
+A evolução ao longo do projeto foi a seguinte:
 
----
-
-## 8. Models Evaluated
-
-### Regression (MonthlyIncome)
-
-| Model | Role | Rationale |
+| Fase | Modelo | Macro F1 (conjunto de teste local) |
 |---|---|---|
-| `LinearRegression` | Baseline | Fast, interpretable, establishes a lower-bound metric |
-| `RandomForestRegressor` | Main | Captures non-linear interactions (e.g. `JobLevel` × `TotalWorkingYears`); robust to outliers |
-| `GradientBoostingRegressor` | Strong | Sequential error correction; typically best R² on tabular data |
+| Baseline | LogisticRegression | 0.6507 |
+| Melhor inicial (sem otimização) | GradientBoosting | 0.7088 |
+| Após RandomizedSearchCV (scoring='f1_macro') | GradientBoosting otimizado | 0.7106 |
 
-`JobLevel` ↔ `MonthlyIncome` correlation ≈ 0.95 (confirmed via EDA). Even the linear baseline is expected to perform well.
+---
 
-### Classification (Attrition)
+## 7. Serialização e Validação
 
-| Model | Role | Rationale |
+Os dois pipelines finais foram serializados com `pickle` para os ficheiros `G8_pipeline_regression.pkl` e `G8_pipeline_classification.pkl`. A nomenclatura segue o formato esperado pelo avaliador (`modelos/G8_pipeline_*.pkl`).
+
+A validação foi feita carregando os ficheiros do disco e chamando `.predict()` directamente sobre os dados crus, sem qualquer pré-processamento externo. Os resultados coincidem com os da fase de otimização. Foi também testado o comportamento com valores nulos injectados artificialmente: o `SimpleImputer` dentro do pipeline trata-os sem erros.
+
+No conjunto de avaliação do professor (`dataset.csv`), os resultados foram:
+
+| Tarefa | Métrica | Valor |
 |---|---|---|
-| `LogisticRegression(class_weight='balanced', max_iter=1000)` | Baseline | Interpretable; `max_iter=1000` avoids convergence warnings after scaling |
-| `RandomForestClassifier(class_weight='balanced')` | Main | Native class weighting; ensemble reduces variance |
-| `GradientBoostingClassifier` | Strong | Best expected F1; handles imbalance well |
+| Regressão | R² | **0.9564** |
+| Classificação | Macro F1 | **0.8745** |
+| Combinado | (R² + Macro F1) / 2 | **0.9154** |
 
 ---
 
-## 9. Hyperparameter Optimisation
+## 8. Utilização de IA Generativa
 
-**Method**: `RandomizedSearchCV`, `cv=5`, `n_iter=20`, `n_jobs=-1`.  
-**Why Randomized over Grid**: exhaustive grid search over the parameter space would take hours. Randomized search finds near-optimal configurations in a fraction of the time, which is well-supported in the literature for tabular ML.
-
-**Scoring**: `'r2'` for regression, `'f1'` for classification.
-
-**Search space (regression — RandomForestRegressor)**:
-- `model__n_estimators`: [100, 200, 300]
-- `model__max_depth`: [None, 5, 10]
-- `model__min_samples_split`: [2, 5]
-
-**Search space (classification — RandomForestClassifier)**:
-- `model__n_estimators`: [100, 200, 300]
-- `model__max_depth`: [None, 5, 10]
-- `model__class_weight`: ['balanced']
-
----
-
-## 10. Serialization
-
-Both final pipelines are serialized with Python's native `pickle`. Validated by loading from disk and calling `.predict()` on raw `X_test` with no manual preprocessing. A NaN-injection test also confirms `SimpleImputer` handles missing values at inference time.
-
-**sklearn version**: will be added here once confirmed. `.pkl` files are only guaranteed compatible within the same major.minor sklearn version.
-
----
-
-## 11. Random State
-
-`_random_state = 24` is used for all `train_test_split`, model constructors, and `RandomizedSearchCV` calls to ensure full reproducibility.
-
----
-
-## 12. Implementation Progress
-
-| Phase | Section in notebook | Status |
-|---|---|---|
-| Phase 2 | Header + imports + data load | ✅ Done |
-| Phase 3 | `## Análises do Relatório de Dados` | ✅ Done |
-| Phase 4 | `## Pré-processamento` | ✅ Done |
-| Phase 5 | `## Train/Test Split` | ✅ Done |
-| Phase 6 | `## Scaling` | ✅ Done |
-| Phase 7 | `## Treino` | ✅ Done |
-| Phase 8 | `## Modelos` | ✅ Done |
-| Fix: SelectKBest added to all pipelines | Variable selection step (k=20) | ✅ Done |
-| Fix: Treino/Modelos redundancy | Modelos loop seeded with Treino baselines | ✅ Done |
-| Phase 9 | `## Otimização` | ⬜ Pending (colleagues) |
-| Phase 10 | `## Deploy` | ⬜ Pending |
-| Phase 11 | Final validation + pkl files | ⬜ Pending |
-
----
-
-## 13. Preprocessing — Additional Decisions (Phase 4)
-
-### `PerformanceRating` — kept despite low variance
-EDA confirmed std=0.36 with only values 3 and 4. Not fully constant, so it is not dropped. Tree-based models select features by information gain at each split — a near-constant feature simply never wins a split and is effectively ignored. Removing it manually would be premature optimisation with no measurable benefit.
-
-### `remainder="drop"` in ColumnTransformer
-Added explicitly so that any unexpected column arriving in the blind test is silently discarded instead of causing a shape mismatch error.
-
-### Feature lists auto-detected from dtypes
-`NUMERIC_FEATURES` and `CATEGORICAL_FEATURES` are derived from `X_reg.select_dtypes(...)` at runtime. Both tasks share the same lists because `X_reg` and `X_clf` have identical columns after dropping their respective targets.
-
-### `SimpleImputer(strategy="median")` for numerics — not mean
-`MonthlyIncome` has a right-skewed distribution (confirmed in EDA). Mean imputation would pull values toward the high-salary tail; median is more representative of the typical employee. Applied to all numeric features for consistency.
-
-### `preprocessor` fit only on `X_train` inside each pipeline
-The sanity-check cell in the notebook fits on full `X_reg` only to verify the output shape. In both final pipelines the `ColumnTransformer` is re-fit strictly on `X_train` via `pipeline.fit(X_train, y_train)` — no test-set information is ever seen during fit.
-
----
-
-## 14. Phase 8 — Modelos
-
-### Loop-based training pattern
-All models are trained inside a `for` loop over a list of `(name, estimator)` tuples. Each iteration builds a fresh `Pipeline([clone(preprocessor), model])`, fits on `X_train`, predicts on `X_test`, and stores results in `reg_pipes` / `clf_pipes` dicts. This keeps Phase 8 self-contained and makes it trivial to add or swap models.
-
-### Regression — model selection rationale
-
-| Model | Key property | Expected behaviour |
-|---|---|---|
-| `LinearRegression` | Assumes linear relationship | High R² expected given JobLevel↔MonthlyIncome ≈ 0.95, but residuals will show heteroscedasticity for high earners |
-| `RandomForestRegressor(n_estimators=100)` | Bagged decision trees | Captures non-linear interactions; robust to outliers |
-| `GradientBoostingRegressor(n_estimators=100)` | Sequential residual correction | Typically best R² on tabular data; slower to train |
-
-Default `n_estimators=100` used at this stage — tuned in Phase 9.
-
-### Classification — `GradientBoostingClassifier` has no `class_weight`
-`GradientBoostingClassifier` does not accept `class_weight`. The boosting algorithm implicitly down-weights well-classified examples in each iteration, which partially compensates for imbalance — but less directly than `class_weight='balanced'`. If `GradientBoosting` wins on F1 despite this, it proceeds to optimisation; otherwise `RandomForest` (which has explicit weighting) is preferred.
-
-### Comparison tables sorted by primary metric
-- Regression: sorted by R² descending
-- Classification: sorted by F1 descending
-
-The model at the top of each table is the candidate for `RandomizedSearchCV` in Phase 9.
-
-### Confusion matrix title includes F1
-Each confusion matrix subplot shows the model name and its F1 score in the title, making it easy to correlate the visual distribution of errors with the scalar metric.
-
----
-
-## 15. Variable Selection — SelectKBest
-
-The project statement explicitly lists *"variable selection"* as a required pipeline step alongside imputation, encoding, and scaling. After the `ColumnTransformer` produces 50 features (22 numeric + 28 OHE columns), a `SelectKBest` selector reduces that to the 20 most statistically relevant.
-
-**Score functions chosen by task:**
-- Regression: `f_regression` — computes the F-statistic for the linear relationship between each feature and `MonthlyIncome`. Appropriate for a continuous target.
-- Classification: `f_classif` — computes the ANOVA F-statistic between each feature and the binary `Attrition` target. Standard choice for classification with a categorical target.
-
-**Why k=20 (out of 50 post-OHE features):**
-- Retains all features that showed meaningful correlation or EDA signal (e.g. `JobLevel`, `TotalWorkingYears`, `OverTime`, `BusinessTravel`).
-- Discards OHE columns for low-signal categories (e.g. infrequent `EducationField` or `Department` splits) and near-constant numerics like `PerformanceRating`.
-- Conservative enough not to hurt performance on a 50-feature space; aggressive enough to demonstrate variable selection awareness.
-
-**How it integrates with the pipeline:**
-```python
-REG_SELECTOR = SelectKBest(f_regression, k=20)
-CLF_SELECTOR = SelectKBest(f_classif, k=20)
-
-# Each pipeline:
-Pipeline([
-    ("preprocessor", clone(preprocessor)),
-    ("selector", clone(REG_SELECTOR)),   # or CLF_SELECTOR
-    ("model", estimator),
-])
-```
-
-`clone()` is used for both `preprocessor` and `selector` so every pipeline instance has its own unfitted copies — no shared state across the comparison loop.
-
-**GridSearchCV / RandomizedSearchCV compatibility:** the selector step is accessible via `selector__k` in the parameter grid, making it straightforward to also search over `k` during optimisation if desired.
-
----
-
-## 16. Treino / Modelos Redundancy Resolution
-
-The `## Treino` section trained two baseline models (`pipe_lr`, `pipe_logreg`) in isolation as a demonstration of the training workflow. The `## Modelos` section then re-trained those same models inside a comparison loop — creating redundancy and two different fitted objects for the same model.
-
-**Resolution chosen (Option A — minimal change):** The `## Modelos` comparison loop is seeded with the already-trained baseline pipes from `## Treino` before iterating over the remaining models:
-
-```python
-# Seed with baselines from ## Treino — no redundant refit
-reg_pipes = {"LinearRegression": (pipe_lr, y_reg_pred_lr)}
-clf_pipes = {"LogisticRegression": (pipe_logreg, y_clf_pred_logreg, y_clf_prob_logreg)}
-
-# Loop only over non-baseline models
-for name, estimator in [(...)]:   # RandomForest, GradientBoosting
-    ...
-```
-
-**Why Option A over Option B:** minimises the diff to the colleague's existing cells in `## Treino`, which already have output cached. Option B (removing Treino training cells entirely) would invalidate cached outputs and break the narrative of introducing the workflow before the full comparison.
-
----
-
-## 17. Phases 5–7 Decisions
-
-### Phase 5 — Train/Test Split
-
-**80/20 split** with `test_size=0.2`, `random_state=24`. 999 training samples / 250 test samples.
-
-**`stratify=y_clf` for classification only.** With ~16% minority class, a random split risks distributing the 201 Yes examples unevenly between train and test. Stratification ensures both sets maintain the original 16% ratio, making the F1 evaluation on the test set a fair reflection of real-world performance. Regression target (`MonthlyIncome`) is continuous so stratification does not apply.
-
-### Phase 6 — Scaling
-
-Scaling is entirely inside the pipeline — no standalone scaling step exists in the notebook. This is an explicit architectural decision: `StandardScaler.fit()` called on full data before the split would leak test-set statistics (mean, std) into training, constituting data leakage. Placing it inside the `Pipeline` ensures fit happens only on `X_train`.
-
-`StandardScaler` is critical for `LinearRegression` and `LogisticRegression` (scale-sensitive models). For tree-based models it has no effect on predictions but does not hurt, keeping the pipeline consistent across all model types.
-
-### Phase 7 — Treino (Baseline Models)
-
-**`clone(preprocessor)` for each pipeline.** `sklearn.Pipeline` does not deep-copy its steps — passing the same `preprocessor` object to multiple pipelines would share fitted state across them. `clone()` creates an unfitted copy with the same hyperparameters, giving each pipeline its own independent preprocessor. This avoids subtle bugs when fitting multiple pipelines in the same session.
-
-**Helper functions `regression_metrics` and `classification_metrics`** defined once and reused across Phases 7, 8, and 9 to ensure consistent metric reporting. `classification_metrics` accepts an optional `y_prob` argument to report ROC-AUC alongside F1.
-
-**Regression baseline — `LinearRegression`:**
-Expected to perform well given `JobLevel`↔`MonthlyIncome` ≈ 0.95 correlation. Residuals plot included to detect heteroscedasticity or non-linearity that would justify the ensemble models in Phase 8.
-
-**Classification baseline — `LogisticRegression(class_weight='balanced', max_iter=1000)`:**
-`class_weight='balanced'` is mandatory for the imbalanced Attrition target. `max_iter=1000` prevents non-convergence warnings after StandardScaler (scaled features converge faster but the default 100 iterations is sometimes still insufficient). Confusion matrix shown to quantify false negatives (churned employees misclassified as staying) — the most costly error type from a business perspective.
-
----
-
-## 18. GenAI Usage (for report section)
-
-Claude Code (claude-sonnet-4-6) was used as a development assistant. Key uses:
-- Structuring the EDA notebook and commentary templates
-- Designing the `ColumnTransformer` + `Pipeline` architecture
-- Drafting this decision log
-- Implementing notebook sections
-
-All analytical decisions (model selection, evaluation metric, class imbalance handling, drop strategy) were reviewed and validated by the group.
+Claude Code (claude-sonnet-4-6) foi usado como assistente de desenvolvimento ao longo de todo o projeto. As contribuições principais foram a estrutura do notebook e os comentários de EDA, a arquitectura do `ColumnTransformer` + `Pipeline`, a configuração do `RandomizedSearchCV` com `StratifiedKFold` e `scoring='f1_macro'`, e a redação deste registo de decisões. Todas as decisões analíticas foram revistas e validadas pelo grupo antes de serem incorporadas no trabalho final.
