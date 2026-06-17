@@ -1,26 +1,26 @@
-Group08 — HR Predictive Pipelines
-==================================
+Group08 — Pipelines Preditivas de RH
+=====================================
 
-Deliverables
-------------
-G8_pipeline_regression.pkl     — Trained regression pipeline (RandomForestRegressor)
-G8_pipeline_classification.pkl — Trained classification pipeline (GradientBoostingClassifier)
-Group08_notebook.ipynb          — Complete notebook with all 8 mandatory sections
-Group08_report.docx             — Written project report
+Entregáveis
+-----------
+G8_pipeline_regression.pkl     — Pipeline de regressão treinada (RandomForestRegressor)
+G8_pipeline_classification.pkl — Pipeline de classificação treinada (GradientBoostingClassifier)
+Group08_notebook.ipynb          — Notebook completo
+Group08_report.docx             — Relatório escrito do projeto
 
-External Libraries (beyond Python stdlib)
-------------------------------------------
+Bibliotecas Externas (além da stdlib do Python)
+----------------------------------------------
 scikit-learn==1.8.0
 numpy==2.4.4
 pandas==3.0.2
 matplotlib==3.10.3
 seaborn==0.13.2
 
-All pipelines use only standard scikit-learn components.
-No custom classes or external ML libraries (XGBoost, LightGBM, etc.) are used.
+Todas as pipelines usam apenas componentes standard do scikit-learn.
+Não são usadas classes personalizadas nem bibliotecas externas de ML (XGBoost, LightGBM, etc.).
 
-Usage
------
+Utilização
+----------
 import pickle, pandas as pd
 
 with open('G8_pipeline_regression.pkl', 'rb') as f:
@@ -29,12 +29,12 @@ with open('G8_pipeline_regression.pkl', 'rb') as f:
 with open('G8_pipeline_classification.pkl', 'rb') as f:
     clf = pickle.load(f)
 
-# Accepts raw DataFrame rows (same columns as employee_data.csv, minus target)
-reg_preds = reg.predict(X_raw)   # returns float MonthlyIncome values
-clf_preds = clf.predict(X_raw)   # returns 'Yes'/'No' strings
+# Aceita linhas brutas de DataFrame (as mesmas colunas de employee_data.csv, sem o alvo)
+reg_preds = reg.predict(X_raw)   # devolve valores float de MonthlyIncome
+clf_preds = clf.predict(X_raw)   # devolve strings 'Yes'/'No'
 
-Metrics on evaluator dataset
------------------------------
-Regression  R²           = 0.9564
-Classification Macro F1  = 0.8745
-Score Combinado          = 0.9154
+Métricas no conjunto do avaliador
+---------------------------------
+Regressão     R²           = 0.9564
+Classificação  Macro F1     = 0.8745
+Score Combinado             = 0.9154

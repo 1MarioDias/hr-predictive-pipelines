@@ -1,160 +1,145 @@
-# HR Predictive Pipelines
+# HR Predictive Pipelines — Group08
 
-This repository contains a reproducible end-to-end machine learning solution for an employee predictive modeling project. It includes two independent Scikit-learn Pipelines built on the same dataset: one for monthly salary prediction and one for employee attrition prediction.
+End-to-end machine learning project for an AI course. Two independent Scikit-learn pipelines trained on the same HR employee dataset: one predicting monthly salary and one predicting employee attrition.
 
-## Overview
+---
 
-In modern web systems, AI models should not depend on manual preprocessing steps or the original development environment. For that reason, this project uses Scikit-learn Pipelines to encapsulate the full workflow, from raw input data to final predictions.
+## Evaluator Results
 
-The goal is to deliver portable and reproducible models that can be evaluated in a blind test scenario.
+| Task | Metric | Score |
+|---|---|---|
+| Regression | R² | **0.9564** |
+| Classification | Macro F1 | **0.8745** |
+| Combined Score | (R² + Macro F1) / 2 | **0.9154** |
 
-## Project Goals
+---
 
-This project includes two predictive tasks:
+## Dataset
 
-- **Regression model**: predict `MonthlyIncome`
-- **Classification model**: predict `Attrition`
+`employee_data/employee_data.csv` — 1249 rows × 35 columns, no missing values. The two targets are `MonthlyIncome` (continuous) and `Attrition` ("Yes"/"No" strings). Attrition is imbalanced: 84% "No" and 16% "Yes".
 
-Both models must be built using the same dataset and exported as complete pipelines.
+![Target distributions](assets/Distribui%C3%A7%C3%A3o%20de%20MonthlyIncome%20%28alvo%20%E2%80%94%20regress%C3%A3o%29%20e%20Distribui%C3%A7%C3%A3o%20de%20Attrition%20%28alvo%20%E2%80%94%20classifica%C3%A7%C3%A3o%29.png)
 
-## Technical Requirements
+The correlation analysis showed `JobLevel` has ~0.95 correlation with `MonthlyIncome` — the strongest single predictor for regression. `TotalWorkingYears` and `Age` also contribute significantly.
 
-To ensure full portability, each model must be exported as a single serialized Scikit-learn Pipeline.
+![Numeric feature correlation heatmap](assets/Correla%C3%A7%C3%A3o%20entre%20vari%C3%A1veis%20num%C3%A9ricas.png)
 
-Each pipeline should include the full preprocessing and modeling flow, such as:
+Among categorical features, `OverTime` is the strongest attrition signal: employees with overtime have a 29% exit rate versus 11% for those without. `BusinessTravel` follows the same pattern.
 
-- Missing value imputation
-- Categorical encoding
-- Feature scaling
-- Feature selection
-- Final estimator
+![Attrition by OverTime and BusinessTravel](assets/Attrition%20por%20OverTime%20%28%25%29%20e%20Attrition%20por%20BusinessTravel%20%28%25%29.png)
 
-The final exported file should behave like a black box: it must accept raw input data in its original format and generate predictions without manual intervention.
+---
+
+## Pipeline Architecture
+
+Both exported pipelines use only native scikit-learn components — no custom classes:
+
+```
+Pipeline
+ ├── preprocessor  (ColumnTransformer)
+ │    ├── num: SimpleImputer(median) → StandardScaler        [22 features]
+ │    └── cat: SimpleImputer(most_frequent) → OneHotEncoder  [7 → 28 columns]
+ ├── selector      (SelectKBest, k tuned)
+ └── model         (estimator)
+```
+
+`handle_unknown="ignore"` on the encoder ensures unseen categories at inference time produce a zero vector instead of an error. The `SimpleImputer` handles missing values even though the training file has none, making the pipeline robust to the blind test.
+
+---
+
+## Regression — MonthlyIncome
+
+Three models were compared. `LinearRegression` is the baseline; ensemble models capture non-linear interactions between features like `JobLevel`, `TotalWorkingYears`, and `Age`.
+
+| Model | R² | RMSE | MAE |
+|---|---|---|---|
+| LinearRegression (baseline) | 0.9277 | 1134.48 | 882.22 |
+| RandomForestRegressor | 0.9399 | 1034.38 | 769.58 |
+| GradientBoostingRegressor | 0.9398 | 1034.88 | 770.19 |
+
+![Residuals — LinearRegression baseline](assets/Res%C3%ADduos%20-%20LinearRegression%20baseline.png)
+
+The baseline residual plot shows a fan pattern (heteroscedasticity) at higher salary values, which justifies using ensemble models that do not assume linearity.
+
+![Residuals by model — Regression](assets/Res%C3%ADduos%20por%20modelo%20%E2%80%94%20Regress%C3%A3o.png)
+
+`RandomForestRegressor` was tuned with `RandomizedSearchCV` (20 iterations, cv=5, `scoring='r2'`). Best parameters: `n_estimators=200`, `max_depth=5`, `min_samples_split=5`. Final R² on local test set: **0.9417**.
+
+---
+
+## Classification — Attrition
+
+The evaluation metric is **Macro F1**: the arithmetic mean of the F1 score for each class ("Yes" and "No"). With only 16% "Yes", accuracy is misleading — a model that always predicts "No" gets 84% accuracy but a Macro F1 near 0.42. All model comparisons were made on Macro F1.
+
+| Model | Macro F1 | Accuracy | ROC-AUC |
+|---|---|---|---|
+| LogisticRegression (baseline) | 0.6507 | 0.740 | 0.8018 |
+| GradientBoostingClassifier | 0.7088 | 0.880 | 0.8119 |
+| RandomForestClassifier | 0.6371 | 0.864 | 0.8009 |
+
+![Confusion matrix — LogisticRegression baseline](assets/Matriz%20de%20Confus%C3%A3o%20%E2%80%94%20LogisticRegression%20baseline.png)
+
+![Confusion matrices — all models](assets/Matrizes%20de%20Confus%C3%A3o%20%E2%80%94%20Classifica%C3%A7%C3%A3o.png)
+
+`GradientBoostingClassifier` was tuned with `RandomizedSearchCV` (50 iterations, `StratifiedKFold(5)`, `scoring='f1_macro'`). `StratifiedKFold` preserves the 16% "Yes" proportion across folds, making cross-validation scores more stable. Best parameters: `n_estimators=300`, `max_depth=3`, `learning_rate=0.05`, `subsample=0.8`. Final Macro F1 on local test set: **0.7106**.
+
+---
 
 ## Deliverables
 
 | File | Description |
 |---|---|
-| `Group08_pipeline_regression.pkl` | Trained sklearn pipeline for `MonthlyIncome` regression |
-| `Group08_pipeline_classification.pkl` | Trained sklearn pipeline for `Attrition` classification |
-| `Group08_notebook.ipynb` | Full notebook: EDA, model comparison, hyperparameter tuning, theoretical commentary |
-| `Group08_report.docx` | Project report: decisions, models tested, reasoning, GenAI prompts used |
+| `G8_pipeline_regression.pkl` | Trained regression pipeline |
+| `G8_pipeline_classification.pkl` | Trained classification pipeline |
+| `Group08_notebook.ipynb` | Complete notebook with all 8 mandatory sections |
+| `Group08_report.docx` | Written project report |
+
+---
 
 ## Repository Structure
 
 ```
 hr-predictive-pipelines/
-├── Group08_notebook.ipynb              # DELIVERABLE
-├── Group08_pipeline_regression.pkl     # DELIVERABLE
-├── Group08_pipeline_classification.pkl # DELIVERABLE
-├── Group08_report.docx                 # DELIVERABLE (written manually)
-├── employee_data/                      # Dataset
-├── notebooks/                          # Working/scratch notebooks
-├── reference/                          # Assignment PDF + course reference notebooks
+├── G8_pipeline_regression.pkl       # DELIVERABLE
+├── G8_pipeline_classification.pkl   # DELIVERABLE
+├── Group08_notebook.ipynb           # DELIVERABLE
+├── Group08_report.docx              # DELIVERABLE
+├── README.txt                       # External libraries declaration
+├── employee_data/
+│   ├── employee_data.csv
+│   └── employee_data.txt
+├── assets/                          # Images exported from notebook
+├── notebooks/                       # Working/EDA notebooks
+├── reference/                       # Assignment PDF + course reference notebooks
 ├── docs/
-│   ├── decisions.md                    # Decision log → feeds the report
+│   ├── decisions.md                 # Decision log — source for the report
 │   └── eda-techniques-guide.md
-└── README.md
+└── project ranking/                 # Teacher's evaluator
+    ├── avaliador.py
+    ├── dataset.csv
+    └── modelos/                     # Pipeline copies for the evaluator
 ```
 
-## Pipeline Design
+---
 
-The use of Scikit-learn `Pipeline` is mandatory. Models and preprocessing steps should not be exported as separate files.
-
-The expected pipeline may include:
-
-- `SimpleImputer` for missing values
-- `OneHotEncoder(handle_unknown="ignore")` for categorical features
-- `StandardScaler` or `MinMaxScaler` for numerical features
-- Optional feature selection
-- Final regression or classification algorithm
-
-This approach ensures that the exported pipeline can be used safely in the blind test without requiring manual preprocessing.
-
-## Suggested Workflow
-
-1. Perform Exploratory Data Analysis (EDA)
-2. Clean and prepare the dataset
-3. Define preprocessing pipelines for numerical and categorical variables
-4. Build complete regression and classification pipelines
-5. Compare multiple algorithms
-6. Optimize hyperparameters using techniques such as:
-   - `GridSearchCV`
-   - `RandomizedSearchCV`
-7. Validate performance on the test dataset
-8. Serialize the final pipelines using `pickle`
-
-## Evaluation Criteria
-
-The project will be evaluated according to the following criteria:
-
-### 1. Data Engineering and Pipeline Quality
-- Robust missing value handling
-- Appropriate encoding strategy
-- Correct feature selection
-- Safe handling of unknown categories
-
-### 2. Exploration and Scientific Methodology
-- Quality and depth of EDA
-- Comparison of multiple algorithms
-- Proper hyperparameter optimization
-
-### 3. Blind Test Performance
-The evaluation metrics are:
-
-- **Regression**: `R2` and `RMSE`
-- **Classification**: `F1-score`
-
-### 4. Code Organization and Documentation
-- Correct file naming
-- Readable and well-structured notebook
-- Clear documentation and report
-
-### 5. Oral Defense
-- Ability to justify preprocessing choices
-- Ability to explain algorithm selection
-- Understanding of hyperparameters and validation strategy
-
-## Serialization
-
-All final models must be serialized using Python's native `pickle` library.
-
-Example:
+## Usage
 
 ```python
-import pickle
+import pickle, pandas as pd
 
-with open("[GroupX]_pipeline_regression.pkl", "wb") as f:
-    pickle.dump(regression_pipeline, f)
+with open('G8_pipeline_regression.pkl', 'rb') as f:
+    reg = pickle.load(f)
+
+with open('G8_pipeline_classification.pkl', 'rb') as f:
+    clf = pickle.load(f)
+
+# Accepts raw DataFrame with the original employee_data.csv columns (minus the target)
+reg_preds = reg.predict(X_raw)   # float — predicted MonthlyIncome
+clf_preds = clf.predict(X_raw)   # strings 'Yes' or 'No'
 ```
 
-## Validation
-
-Before submission, both pipelines should be tested with the provided test dataset to ensure that:
-
-- The file loads correctly
-- Raw data is accepted without manual preprocessing
-- Predictions are generated successfully
-- No runtime errors occur
-
-## Generative AI Use
-
-The use of Generative AI tools is allowed as a support mechanism for code optimization and development assistance. However, all analytical decisions must remain under full team control.
-
-Any prompts used with Generative AI tools should be documented in the final report.
-
-## Notes
-
-- Do not export preprocessing steps separately from the model
-- Do not rely on notebook-only variables or manual transformations
-- Keep the project reproducible and organized
-- Make sure the final exported pipelines are presentation-ready for the blind test
+---
 
 ## Deadline
 
-- **Submission deadline**: June 18, 2026, at 11:59 PM
-- **Presentation and defense**: June 19, 2026, from 9:00 AM
-
-## Repository Description
-
-Reproducible end-to-end Scikit-learn pipelines for employee salary regression and attrition classification. Designed for blind-test evaluation with robust preprocessing, model validation, and portable serialized pipelines.
+Submission: **June 18, 2026 at 23:59** | Defence: **June 19, 2026 from 09:00**
